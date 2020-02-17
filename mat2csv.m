@@ -1,20 +1,45 @@
-basePath = "E:/AdherentIncucyteDemo/Baxter/Analysis/CellData_190319_all_1/Compact/";
-savePath = "E:/AdherentIncucyteDemo/Tracks/";
+basePath = '/media/emiro593/AdherentCells/';
 
+readPath = strcat(basePath, 'Baxter/Analysis/CellData_200207_123024/');
+savePath = strcat(basePath, 'Tracks/');
+savePath
 mkdir(savePath);
 
-files = dir(fullfile(basePath, '*.mat'));
+files = dir(fullfile(readPath, '*.mat'));
 
-
+maxFrames = 0;
 for n=1:length(files)
     file = files(n);
-    fileName = strcat(basePath, file.name);
+    fileName = strcat(readPath, file.name);
+    
+    T = load(fileName);
+    T
+    T = T.cellData_compact;
+    
+    cell = T(1);
+    cell
+    a = b;
+    
+     for i=1:length(T)
+        cell = T(i);
+        
+        cell
+        
+        if (cell.lastFrame > maxFrames)
+            maxFrames = cell.lastFrame;
+        end
+     end
+end
+    
+for n=1:length(files)
+    file = files(n);
+    fileName = strcat(readPath, file.name);
     
     T = load(fileName);
     T = T.cellData_compact;
         
-    X = nan(length(T), 52);
-    Y = nan(length(T), 52);
+    X = nan(length(T), maxFrames);
+    Y = nan(length(T), maxFrames);
     
     for i=1:length(T)
         cell = T(i);

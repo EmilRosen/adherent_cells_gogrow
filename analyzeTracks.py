@@ -18,6 +18,9 @@ from scipy.io import loadmat;
 
 from scipy.optimize import curve_fit;
 
+from scipy.io import loadmat;
+
+
 ##
 ##
 ##
@@ -27,7 +30,7 @@ trackPath = basePath + "Tracks/";
 debugPath = basePath + "Debug/";
 
 
-trackPattern  = "{plate:d}_{row}{col:02d}_{celline}_{density}.{fileEnding}";
+trackPattern  = "{plate:d}_{row}{col:02d}_{celline:d}_{density:d}_{dimension}.{fileEnding}";
 folderPattern  = "{plate:d}_{row}{col:02d}_{celline:d}_{density:d}";
 filePattern    = "{day:02d}d{hour:02d}h{minute:02d}m.{fileEnding}";
 
@@ -46,30 +49,6 @@ celline2motile = {
 	3118: 1,
 	3180: 1
 };
-
-def well2celline(input):
-	if input["plate"] == 285:
-		low  = 3051;
-		high = 3230;
-	if input["plate"] == 286:
-		low  = 3035;
-		high = 3017;
-	if input["plate"] == 287:
-		low  = 3053;
-		high = 3016;
-	if input["plate"] == 288:
-		low  = 3013;
-		high = 3054;
-	if input["plate"] == 289:
-		low  = 3118;
-		high = 3180;
-
-	return high if input["col"] >= 7 else low;
-
-def well2density(input):
-	densityIndex = input["col"] if input["col"] < 7 else input["col"] - 6;
-
-	return 2000 / 2**(densityIndex - 1);
 
 ##
 ##
@@ -168,6 +147,15 @@ def findIndividualDiffusion(X, Y, trackLengthThreshold=15):
 
 	return p;
 
+def frame2time(plate, T):
+	if plate == 108 and T < 78:
+		return T * 0.5;
+	if plate == 108 and T >= 78:
+		return 78 * 0.5 + (T - 78) * 3;
+	if plate == 106 and T < 58:
+		return T * 0.5;
+	if plate == 106 and T >= 58:
+		return 78 * 0.5 + (T - 58) * 3;
 
 ###########
 ## Debug ##
@@ -237,10 +225,105 @@ for input in inputs:
 
 a = b;
 '''
-##
-##
-##
-inputs  = utils.getInputFiles(trackPattern, trackPath, lambda input: input["dimension"] == "X");
+##################################
+## Convert to pandas data frame ##
+##################################
+'''
+inputs  = utils.getInputFiles(trackPattern, trackPath, filter=lambda row: row["dimension"] == "X");
+
+df = [];
+for input in inputs:
+	X  = np.loadtxt(input["path"] + trackPattern.format(**{**input, "dimension": "X"}));
+	Y  = np.loadtxt(input["path"] + trackPattern.format(**{**input, "dimension": "Y"}));
+	T  = np.indices(X.shape)[1];
+	ID = np.indices(X.shape)[0];
+
+	I = ~np.isnan(X);
+	X = X[I];
+	Y = Y[I];
+	T = T[I];
+	ID = ID[I];
+
+	tdf = pd.DataFrame({"X": X, "Y": Y, "ID": ID, "T": T});
+
+	tdf["Density"] = input["density"];
+	tdf["Plate"]   = input["plate"];
+	tdf["Row"]     = input["row"];
+	tdf["Column"]  = input["col"];
+	tdf["Celline"] = input["celline"];
+
+	df.append(tdf);
+
+df = pd.concat(df);
+
+df.to_csv(basePath + "AdherentTracks.csv", header=True, index=False, sep="\t");
+'''
+
+########################################
+## Load adherent tracks in csv format ##
+########################################
+df = pd.read_csv(basePath + "AdherentTracks.csv", sep="\t");
+
+##########################
+## Plot number of cells ##
+##########################
+'''
+lines     = sorted(df["Celline"].unique());
+densities = sorted(df["Density"].unique());
+
+i = 0;
+plt.figure();
+for line in lines:
+	for density in densities:
+		tdf = df[(df["Celline"] == line) & (df["Density"] == density)];
+		
+		i += 1;
+		plt.subplot(len(lines), len(densities), i);
+
+		for key, dlf in tdf.groupby(by=["Plate", "Row", "Column"]):
+			N = dlf.groupby(by="T").apply(lambda df: len(df)).reset_index();
+
+			print(line, density, key);
+
+			N["H"] = N.apply(lambda row: frame2time(key[0], row["T"]), axis=1);
+
+			plt.plot(N["H"], N[0]);
+
+			if (i - 1) % len(densities) == 0:
+				plt.ylabel(line);
+
+			if (i - 1) / len(densities) >= len(densities) - 1:
+				plt.xlabel(density);
+
+		plt.axvline(4 * 24);
+			
+plt.show();
+'''
+
+##############
+## Movement ##
+##############
+# Only use 3065 since it is the only good cell line
+# Only ise densities
+
+df = df[(df["Celline"] == 3065) & (df["Row"] != "A") & (df["Density"] >= 625)];
+
+print(df);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+a = b;
 
 groups = {};
 for input in inputs:
