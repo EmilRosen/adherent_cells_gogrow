@@ -1,0 +1,17 @@
+*.DS_Store
+venv
+*__pycache__
+
+document.*
+!document.tex
+
+*texput.log
+figures/*
+
+*.asv
+
+tracking*
+
+.ipynb_checkpoints*
+
+Rplots*
