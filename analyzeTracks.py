@@ -267,7 +267,7 @@ df = pd.read_csv(basePath + "AdherentTracks.csv", sep="\t");
 ##########################
 ## Plot number of cells ##
 ##########################
-'''
+
 lines     = sorted(df["Celline"].unique());
 densities = sorted(df["Density"].unique());
 
@@ -298,7 +298,7 @@ for line in lines:
 		plt.axvline(4 * 24);
 			
 plt.show();
-'''
+
 
 ##############
 ## Movement ##
@@ -312,6 +312,9 @@ print(df);
 
 
 
+for key, tdf in df.groupby(by=["Plate", "Row", "Well"]):
+	for ID, cdf in tdf.groupby(by="T"):
+		cdf["H"] = cdf.apply(lambda row: frame2time(key[0], row["T"]), axis=1);
 
 
 
