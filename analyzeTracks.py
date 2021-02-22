@@ -20,19 +20,38 @@ from scipy.optimize import curve_fit;
 
 from scipy.io import loadmat;
 
+from particle_math import particlesInRectangle;
 
-##
-##
-##
+
+##################################
+## Load adherent incucyte demo ##
+##################################
+basePath = "/media/emiro593/Storage/AdherentIncucyteDemo/";
+
+trackPath = basePath + "Tracks/";
+debugPath = basePath + "Debug/";
+
+trackPattern  = "{plate:d}_{row}{col:02d}_{dimension}.{fileEnding}";
+folderPattern  = "{plate:d}_{row}{col:02d}_{celline:d}_{density:d}";
+filePattern    = "{day:02d}d{hour:02d}h{minute:02d}m.{fileEnding}";
+
+microns_per_pixel = 1.24;
+
+##########################
+## Load Adherent Milena ##
+##########################
+
 basePath = "/media/emiro593/AdherentCells/";
 
 trackPath = basePath + "Tracks/";
 debugPath = basePath + "Debug/";
 
-
 trackPattern  = "{plate:d}_{row}{col:02d}_{celline:d}_{density:d}_{dimension}.{fileEnding}";
 folderPattern  = "{plate:d}_{row}{col:02d}_{celline:d}_{density:d}";
 filePattern    = "{day:02d}d{hour:02d}h{minute:02d}m.{fileEnding}";
+
+microns_per_pixel = 2.82;
+
 
 ##
 ##
@@ -147,7 +166,50 @@ def findIndividualDiffusion(X, Y, trackLengthThreshold=15):
 
 	return p;
 
+def incucyte_demo_metadata(input, df):
+	if input["col"] == 1 or input["col"] == 7:
+		df["Density"] = 2000;
+	if input["col"] == 2 or input["col"] == 8:
+		df["Density"] = 1000;
+	if input["col"] == 3 or input["col"] == 9:
+		df["Density"] = 500;
+	if input["col"] == 4 or input["col"] == 10:
+		df["Density"] = 250;
+	if input["col"] == 5 or input["col"] == 11:
+		df["Density"] = 125;
+	if input["col"] == 6 or input["col"] == 12:
+		df["Density"] = 63;
+
+	if input["plate"] == 285 and input["col"] < 7:
+		df["Celline"] = 3051;
+	if input["plate"] == 285 and input["col"] >= 7:
+		df["Celline"] = 3230;
+
+	if input["plate"] == 286 and input["col"] < 7:
+		df["Celline"] = 3035;
+	if input["plate"] == 286 and input["col"] >= 7:
+		df["Celline"] = 3017;
+
+	if input["plate"] == 287 and input["col"] < 7:
+		df["Celline"] = 3053;
+	if input["plate"] == 287 and input["col"] >= 7:
+		df["Celline"] = 3016;
+
+	if input["plate"] == 288 and input["col"] < 7:
+		df["Celline"] = 3013;
+	if input["plate"] == 288 and input["col"] >= 7:
+		df["Celline"] = 3054;
+
+	if input["plate"] == 289 and input["col"] < 7:
+		df["Celline"] = 3118;
+	if input["plate"] == 289 and input["col"] >= 7:
+		df["Celline"] = 3180;
+
+	return df;
+
 def frame2time(plate, T):
+	#return T * 45 / 60.0;
+
 	if plate == 108 and T < 78:
 		return T * 0.5;
 	if plate == 108 and T >= 78:
@@ -235,6 +297,10 @@ df = [];
 for input in inputs:
 	X  = np.loadtxt(input["path"] + trackPattern.format(**{**input, "dimension": "X"}));
 	Y  = np.loadtxt(input["path"] + trackPattern.format(**{**input, "dimension": "Y"}));
+
+	if len(X.shape) < 2:
+		continue;
+
 	T  = np.indices(X.shape)[1];
 	ID = np.indices(X.shape)[0];
 
@@ -246,11 +312,13 @@ for input in inputs:
 
 	tdf = pd.DataFrame({"X": X, "Y": Y, "ID": ID, "T": T});
 
-	tdf["Density"] = input["density"];
 	tdf["Plate"]   = input["plate"];
 	tdf["Row"]     = input["row"];
 	tdf["Column"]  = input["col"];
-	tdf["Celline"] = input["celline"];
+	#tdf["Celline"] = input["celline"];
+	#tdf["Density"] = input["density"];
+
+	tdf = incucyte_demo_metadata(input, tdf);
 
 	df.append(tdf);
 
@@ -267,6 +335,21 @@ df = pd.read_csv(basePath + "AdherentTracks.csv", sep="\t");
 ##########################
 ## Plot number of cells ##
 ##########################
+def find_cells_in_area(df):
+	df = df[["X", "Y"]].dropna();
+
+	imsize = [1486, 1112];
+	side   = 1486 / 2;
+
+	#rect = [imsize[0] / 2 - side, imsize[1] / 2 - side, imsize[0] / 2 + side, imsize[1] / 2 + side];
+	rect = [imsize[0] / 2 - side, imsize[1] / 2 - side, imsize[0] / 2 + side, imsize[1] / 2 + side];
+
+	P = df[["X", "Y"]].values;
+	
+	N = int(particlesInRectangle(np.array(P), rect));
+
+	return len(df);
+
 
 lines     = sorted(df["Celline"].unique());
 densities = sorted(df["Density"].unique());
@@ -281,9 +364,7 @@ for line in lines:
 		plt.subplot(len(lines), len(densities), i);
 
 		for key, dlf in tdf.groupby(by=["Plate", "Row", "Column"]):
-			N = dlf.groupby(by="T").apply(lambda df: len(df)).reset_index();
-
-			print(line, density, key);
+			N = dlf.groupby(by="T").apply(find_cells_in_area).reset_index();
 
 			N["H"] = N.apply(lambda row: frame2time(key[0], row["T"]), axis=1);
 
@@ -295,32 +376,126 @@ for line in lines:
 			if (i - 1) / len(densities) >= len(densities) - 1:
 				plt.xlabel(density);
 
-		plt.axvline(4 * 24);
+		#plt.axvline(4 * 24);
 			
 plt.show();
 
+a =  b;
 
 ##############
 ## Movement ##
 ##############
+
 # Only use 3065 since it is the only good cell line
 # Only ise densities
 
 df = df[(df["Celline"] == 3065) & (df["Row"] != "A") & (df["Density"] >= 625)];
+#df = df[(df["Celline"] == 3065) & (df["Row"] != "P") & (df["Density"] >= 0)];
+#df = df[(df["Celline"] == 3368) & (df["Row"] != "P") & (df["Density"] >= 0)];
 
-print(df);
+densities = list(df["Density"].unique());
+rows      = list(df["Row"].unique());
+
+diff_df = [];
+
+i = 0;
+plt.figure();
+for key, tdf in df.groupby(by=["Plate", "Density", "Row", "Column"]):
+
+	tdf.loc[:, "H"] = tdf.apply(lambda row: frame2time(key[0], row["T"]), axis=1);
+
+	## Remove camera shifts
+	TO = tdf[["X", "Y", "T"]].groupby(by="T").mean();
+
+	tdf.loc[:, "X"] = tdf.loc[:, "X"] - TO.merge(tdf, left_index=True, right_on="T")["X_x"];
+	tdf.loc[:, "Y"] = tdf.loc[:, "Y"] - TO.merge(tdf, left_index=True, right_on="T")["Y_x"];
+
+	## Mean square displacement
+	cells = [];
+
+	#plt.figure();
+	#plt.title(key);
+	for ID, cdf in tdf.groupby(by="ID"):
+		cdf = cdf[cdf["T"] < 78];
+
+		if len(cdf) > 5:
+			cdf = cdf.sort_values("T");
+
+			dX = (cdf["X"].values[1:] - cdf["X"].values[0]) * microns_per_pixel;
+			dY = (cdf["Y"].values[1:] - cdf["Y"].values[0]) * microns_per_pixel;
+			SD = dX**2 + dY**2;
+
+			dT = cdf["H"].values[1:] - cdf["H"].values[0];
+
+			pT = (cdf["H"].values[1:] + cdf["H"].values[:-1]) / 2;
+
+			cells.append(np.mean(SD / (4 * dT) / 3600));
+
+			#plt.plot(pT, SD / (4 * dT) / 3600, "k", alpha=0.25);
+
+	#plt.show();
+
+	diff_df.append({
+		"Plate"    : key[0],
+		"Row"      : key[2],
+		"Column"   : key[3],
+		"Diffusion": np.mean(cells),
+	});
+
+	i += 1;
+	plt.subplot(len(rows), len(densities), i);
+	plt.title("{} {}".format(key[1], key[2]));
+	plt.hist(cells, bins=100, density=True);
+	plt.xlim([0, 2]);
+plt.show();
+
+diff_df = pd.DataFrame(diff_df);
 
 
+###############
+## Posterior ##
+###############
+pdf = pd.read_csv(basePath + "validation_abc_posterior.csv", sep="\t");
 
-for key, tdf in df.groupby(by=["Plate", "Row", "Well"]):
-	for ID, cdf in tdf.groupby(by="T"):
-		cdf["H"] = cdf.apply(lambda row: frame2time(key[0], row["T"]), axis=1);
+rows = sorted(pdf["Row"  ].unique());
+cols = sorted(pdf["Column"].unique());
+
+l1 = [];
+l2 = [];
+
+for plate, plate_df in pdf.groupby(by="Plate"):
+
+	i = 0;
+	plt.figure();
+	for r in rows:
+		for c in cols:
+			well_df = plate_df[(plate_df["Column"] == c) & (plate_df["Row"] == r)];
+
+			i += 1;
+
+			if len(well_df) == 0:
+				continue;
+
+			ref_df = diff_df[(diff_df["Plate"] == plate) & (diff_df["Row"] == r) & (diff_df["Column"] == c)];
+
+			if len(well_df) == 0 or len(ref_df) == 0:
+				continue;
+
+			#N = ref_df.groupby(by="T").apply(lambda df: len(df)).reset_index();
+			#N["H"] = N.apply(lambda row: frame2time(plate, row["T"]), axis=1);
+			
+			l1.append(np.mean(well_df["Diffusion"]));
+			l2.append(ref_df["Diffusion"].values[0]);
+			
+			plt.subplot(len(rows), len(cols), i);
+			plt.hist(well_df["Proliferation"], bins=10);
+			#plt.axvline(ref_df["Diffusion"].values[0], color="k");
+
+plt.show();
 
 
-
-
-
-
+plt.scatter(l1, l2);
+plt.show();
 
 
 

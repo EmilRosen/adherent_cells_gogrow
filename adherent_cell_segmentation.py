@@ -53,14 +53,17 @@ from scipy.signal import savgol_filter;
 ###########
 dpi = 92;
 
-basePath = "/media/emiro593/AdherentCells/";
 
-folderPattern  = "{plate:d}_{row}{col:02d}_{celline:d}_{density:d}";
+
+basePath = "/media/emiro593/AdherentCells/";
+rawPath = basePath + "Ludmila_2020_06_02/";
+
+folderPattern  = "{plate:d}_{row}{col:02d}";
 filePattern    = "{day:02d}d{hour:02d}h{minute:02d}m.{fileEnding}";
 
-rawFolderPattern   = "{plate:d} {name}";
+rawFolderPattern   = "{plate:d}";
 
-rawPattern         = "phase_{row}{col:d}_1_{day:02d}d{hour:02d}h{minute:02d}m.{fileEnding}";
+rawPattern         = "VID{vid}_{row}{col:d}_1_{day:02d}d{hour:02d}h{minute:02d}m.{fileEnding}";
 paintedPattern     = "{index:d}_{type}.{fileEnding}";
 
 ##
@@ -74,6 +77,9 @@ summaryPath    = basePath + "Summary/"
 baxterPath     = basePath + "Baxter/"
 weightPath     = basePath + "WeightMap/";
 
+track_path = basePath + "Track/";
+track_debug_path = basePath + "DebugTrack/";
+
 netPath = basePath + "model.h5";
 
 numLayers = 4;
@@ -81,13 +87,28 @@ numFilters = 64;
 epochs = 1000;
 
 weights = [
-	{"weight":  1  , "operation": "addition"      , "type": "weightMap_Balance", "optional": False, "padParams": {"mode": "edge"}},
-	{"weight":  1.5, "operation": "addition"      , "type": "weightMap_Border" , "optional": False, "padParams": {"mode": "edge"}},
+	{"weight":  1  , "operation": "addition", "type": "weightMap_Balance", "optional": False, "padParams": {"mode": "edge"}},
+	{"weight":  1.5, "operation": "addition", "type": "weightMap_Border" , "optional": False, "padParams": {"mode": "edge"}},
 ];
 
-imageSize = 512;
+imageSize = 256;
 
-micronsPerPixel = 2.82;
+# Incucyte sepcs for ludmila adherent experiment
+# Image Resolution: 1.24 microns/pixel
+# Image Size: 1408 x 1040 pixels
+# Field of View: 1.75 x 1.29 mm
+
+micronsPerPixel = 1.24;
+
+# width X height
+full_image_size = [1408, 1040];
+
+# Standard diameter of 96 well plate is 6.94 mm --> 6940 um
+# pi * (6940/2)^2 = 37827602.9826
+# 1408 * 1040 * 1.24^2 = 2251538.432
+# Ratio --> 2251538.432 / 37827602.9826 = 0.05952104427 ~ 6%
+# 500 seeded --> 30 at start
+# In rality we see between 20 - 50 cells at the start. Reasonable?
 
 ################
 ## Initialize ##
@@ -100,12 +121,15 @@ utils.defineOutput(baxterPath);
 utils.defineOutput(weightPath);
 utils.defineOutput(stabilizedPath);
 utils.defineOutput(summaryPath);
+utils.defineOutput(track_path);
+utils.defineOutput(track_debug_path);
 
 classes = [
 	{"name": "painted", "index": 0, "color": 0x000000},		# Background
 	{"name": "painted", "index": 1, "color": 0xFF0000},		# Dead cells
 	{"name": "painted", "index": 2, "color": 0xFFFF00},		# Censored
 	{"name": "painted", "index": 3, "color": 0xFFFFFF},		# Cells
+	{"name": "painted", "index": 4, "color": 0x00FF00},		# Protrusions
 ];
 
 def equalize(I):
@@ -143,6 +167,7 @@ if __name__ == '__main__':
 	#################################
 	## Generate balanced weightmap ##
 	#################################
+	'''
 	inputs  = utils.getInputFiles(paintedPattern, paintedPath, lambda input: input["type"] == "painted");
 	
 	numScores = {};
@@ -196,7 +221,7 @@ if __name__ == '__main__':
 
 		meta = {**input, **{"type": "weightMap_Border"}};
 		scipy.misc.toimage(weightMap, cmin=0, cmax=1).save(weightPath + paintedPattern.format(**meta));
-
+	'''
 	###################
 	## Train Network ##
 	###################
@@ -205,7 +230,7 @@ if __name__ == '__main__':
 
 	tentacleNet = models.load(netPath);
 	
-	originalInputs = utils.getInputFiles(paintedPattern, paintedPath, lambda input: input["fileEnding"] == "tiff");
+	originalInputs = utils.getInputFiles(paintedPattern, paintedPath, lambda input: (input["type"] == "raw" and input["fileEnding"] != "pdn"));
 	paintedInputs  = utils.getInputFiles(paintedPattern, paintedPath, lambda input: input["type"] == "painted");
 
 	borderInputs   = utils.getInputFiles(paintedPattern, weightPath, lambda input: input["type"] == "weightMap_Border");
@@ -251,7 +276,7 @@ if __name__ == '__main__':
 
 		tentacleNet = models.createUNET(trainingSet['imageSize'], numLayers, numFilters, classes=len(classes), kernel_size=(3, 3));
 
-		batchSize  = 4;
+		batchSize  = 5;
 		savePeriod = 50;
 
 		saveCheckpoint    = callbacks.ModelCheckpoint(netPath, verbose=0, period=savePeriod, save_best_only=True, monitor="loss", mode="min");
@@ -259,11 +284,12 @@ if __name__ == '__main__':
 		tentacleNet.fit_generator(datagen(traingen, targetgen, batchSize, classes), steps_per_epoch=(5 * numSamples / batchSize), epochs=epochs, verbose=1, callbacks=[saveCheckpoint]);
 
 		tentacleNet = models.load(netPath);
+	'''
 	
 	###################
 	## Filter Images ##
 	###################
-	
+	'''
 	def parse_platemap(xml, input):
 		row = ord(input["row"]) - 65;
 		col = input["col"] - 1;
@@ -281,23 +307,26 @@ if __name__ == '__main__':
 		return {};
 
 	import xml.etree.ElementTree as ET;
-
+	'''
+	'''
 	print("Apply neural network filter");
 
-	parentInputs = utils.getInputFiles(rawFolderPattern, stabilizedPath, filter = lambda row: row["plate"] in [106, 108]);
+	#parentInputs = utils.getInputFiles(rawFolderPattern, rawPath, filter = lambda row: row["plate"] in [106, 108]);
+	parentInputs = utils.getInputFiles(rawFolderPattern, rawPath);
 
 	for parentInput in parentInputs:
-		xml_root = ET.parse(basePath + "PlateMap/{plate} {name}.PlateMap".format(**parentInput)).getroot();
+		#xml_root = ET.parse(basePath + "PlateMap/{plate} {name}.PlateMap".format(**parentInput)).getroot();
 
-		inputs = utils.getInputFiles(rawPattern, stabilizedPath + parentInput["file"] + "/");
+		inputs = utils.getInputFiles(rawPattern, parentInput["path"] + "/" + parentInput["file"] + "/");
 
 		for input in inputs:
-			xml_dict = parse_platemap(xml_root, input);
+			#xml_dict = parse_platemap(xml_root, input);
 
-			if xml_dict["density"] in [10000, 5000]:
-				continue;
+			#if xml_dict["density"] in [10000, 5000]:
+			#	continue;
 
-			savePath = filterPath + folderPattern.format(**{**parentInput, **xml_dict}) + "/";
+			#savePath = filterPath + folderPattern.format(**{**parentInput, **xml_dict}) + "/";
+			savePath = filterPath + folderPattern.format(**{**parentInput, **input}) + "/";
 			utils.defineOutput(savePath);
 			
 			saveFile = savePath + filePattern.format(**{**input, "fileEnding": "png"});
@@ -321,11 +350,11 @@ if __name__ == '__main__':
 				L = utils.layered2rgb(F, classes);
 							
 				scipy.misc.toimage(L, cmin=0, cmax=1).save(saveFile);
-	
+	'''
 	#######################
 	## Images for baxter ##
 	#######################
-	
+	'''
 	parentInputs = utils.getInputFiles(folderPattern, filterPath);
 	
 	for parentInput in parentInputs:
@@ -351,6 +380,70 @@ if __name__ == '__main__':
 	#######################
 	'''
 	print("Analyzing particles");
+
+	kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3));
+
+	#parentInputs = utils.getInputFiles(folderPattern, filterPath, filter=lambda row: row["col"] not in [2, 3, 5, 6, 7, 8, 10, 11]);
+	parentInputs = utils.getInputFiles(folderPattern, filterPath);
+
+	for parentInput in parentInputs:
+		inputs = utils.getInputFiles(filePattern, parentInput["path"] + parentInput["file"]);
+		#inputs = utils.getInputFiles(filePattern, parentInput["path"] + parentInput["file"], filter=lambda row: row["day"] == 0 and row["hour"] in [0] and row["minute"] in [0]);
+
+		savePath = particlePath + folderPattern.format(**parentInput) + "/";
+		utils.defineOutput(savePath);
+
+		inputs = utils.filterDoneInput(inputs, savePath, lambda input: filePattern.format(**{**input, "fileEnding": "json"}));
+
+		for input in inputs:
+			print(parentInput["file"], input["file"]);
+
+			I = utils.loadImage(input["path"] + "/" + input["file"], "HEX");
+			I = utils.hex2layered(I, classes);
+			
+			I = I[3];
+
+			I = (I * 255).astype("uint8");			
+			
+			I = cv2.morphologyEx(I, cv2.MORPH_OPEN, kernel, iterations=2);
+			B = cv2.dilate(I, kernel, iterations=4);
+
+			D = cv2.distanceTransform(I, cv2.DIST_L2, 5);
+
+			ret, F = cv2.threshold(D, 2, 255, 0);
+
+			U = B - F;
+
+			ret, M = cv2.connectedComponents(F.astype("uint8"), 4);
+			M += 1;
+
+			M[U == 255] = 0;
+
+			M = cv2.watershed(np.dstack((I, I, I)), M);
+
+			#plt.imshow(M);
+			#plt.show();
+
+			props     = measure.regionprops(M);
+			
+			particles = [];
+			for prop in props:
+				r = np.sqrt(prop.area / np.pi) * micronsPerPixel;
+
+				if 2 * r > 15 and 2 * r < 100:
+					particles.append({"X": float(prop.centroid[1] * micronsPerPixel), "Y": float(prop.centroid[0] * micronsPerPixel), "radius": r});
+
+			col2seed = {2: 2000, 3: 1000, 4: 500, 5: 250, 6: 125, 7: 2000, 8: 1000, 9: 500, 10: 250, 11: 125};
+			#print(parentInput["file"], input["day"], len(particles), col2seed[parentInput["col"]]);
+
+			with open(savePath + filePattern.format(**{**input, "fileEnding": "json"}), 'w') as fp:
+				json.dump(particles, fp);
+	'''
+	################
+	## Confluence ##
+	################
+	'''
+	print("Measuring confluence");
 
 	kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3));
 
@@ -402,28 +495,71 @@ if __name__ == '__main__':
 			with open(savePath + filePattern.format(**{**input, "fileEnding": "json"}), 'w') as fp:
 				json.dump(particles, fp);
 	'''
+	'''
+	##############################
+	## Confluence: No particles ##
+	##############################
+	print("Measuring confluence");
+
+	kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3));
+
+	parentInputs = utils.getInputFiles(folderPattern, filterPath);
+
+	#parentInputs = np.random.choice(parentInputs, len(parentInputs), replace=False);
+
+	for parentInput in parentInputs:
+		inputs = utils.getInputFiles(filePattern, parentInput["path"] + parentInput["file"]);
+
+		savePath = particlePath + folderPattern.format(**parentInput) + "/";
+		utils.defineOutput(savePath);
+
+		if parentInput["row"] != "B":
+			continue;
+
+		well = [];
+
+		for input in inputs:
+			I = utils.loadImage(input["path"] + "/" + input["file"], "HEX");
+			I = utils.hex2layered(I, classes);
+			
+			time = input["day"] * 24 + input["hour"];
+			S = np.sum(I[3]);
+
+			well.append({"Time": time, "Confluence": S});
+
+		well = pd.DataFrame(well);
+		well = well.sort_values("Time");
+
+		plt.plot(well["Time"], well["Confluence"]);
+		plt.title(parentInput["file"]);
+		plt.show();
+
+	a = b;
+	'''
 	########################
 	## Summary statistics ##
 	########################
-	
+	'''
 	print("Extract summary statistics");
 
 	parentInputs = utils.getInputFiles(folderPattern, particlePath);
 
-	baseRadius = 10;
-	maxRadius  = 250;
+	baseRadius = 20;
+	maxRadius  = 260;
 
 	required_cells = 50;
 
 	radii = None;
 
 	for parentInput in parentInputs:
-		inputs = utils.getInputFiles(filePattern, parentInput["path"] + parentInput["file"]);
+		inputs = utils.getInputFiles(filePattern, parentInput["path"] + parentInput["file"], filter=lambda row: row["day"] == 4 and row["hour"] in [0]);
 
-		imsize = [4190, 3135];
+		imsize = [full_image_size[0] * micronsPerPixel, full_image_size[1] * micronsPerPixel];
+		#side   = full_image_size[0] * micronsPerPixel / 4;
 
 		# x, y, w, h
-		rect = [imsize[0] / 2 - 510 * 2, imsize[1] / 2 - 510 * 2, imsize[0] / 2 + 510 * 2, imsize[1] / 2 + 510 * 2];
+		#rect = [imsize[0] / 2 - side, imsize[1] / 2 - side, imsize[0] / 2 + side, imsize[1] / 2 + side];
+		rect = [0, 0, imsize[0], imsize[1]];
 
 		sizes        = [];
 		numParticles = [];
@@ -432,6 +568,8 @@ if __name__ == '__main__':
 		data = [];
 
 		for input in inputs:
+			print(parentInput["file"], input["file"]);
+
 			with open(input["path"] + "/" + input["file"]) as fp:
 				particles = json.load(fp);
 
@@ -443,18 +581,19 @@ if __name__ == '__main__':
 
 				N = int(particlesInRectangle(np.array(P), rect));
 
-				if N < required_cells:
-					continue;
+				#if N < required_cells:
+				#	continue;
 
 				numParticles.append(N);
 				sizes = sizes + S;
 				
 				pc, radii = pairCorrelation(np.array(P), rect, maxRadius, baseRadius);
 
-				if True:
+				if False:
+					print("Num cells:", "{plate} {row}{col}".format(**{**input, **parentInput}), " : ", N, np.mean(sizes));
 					plt.figure(figsize=(10, 10));
 					plt.subplot(2, 1, 1);
-					plt.suptitle("{celline} {row}{col}".format(**{**input, **parentInput}));
+					plt.suptitle("{plate} {row}{col}".format(**{**input, **parentInput}));
 					plt.scatter(np.array(P)[:, 0], np.array(P)[:, 1]);
 					plt.plot([rect[0], rect[0]], [rect[1], rect[3]], "k--");
 					plt.plot([rect[2], rect[2]], [rect[1], rect[3]], "k--");
@@ -464,7 +603,7 @@ if __name__ == '__main__':
 					plt.plot(radii, pc);
 					plt.show();
 				
-				data.append({"plate": parentInput["plate"], "col": parentInput["col"], "row": parentInput["row"], "num": N, "pairCorrelation": list(pc), "radii": list(radii), "dr": baseRadius, "rMax": maxRadius, "fov": [1020 * 2, 1020 * 2]});
+				data.append({"plate": parentInput["plate"], "col": parentInput["col"], "row": parentInput["row"], "num": N, "pairCorrelation": list(pc), "radii": list(radii), "dr": baseRadius, "rMax": maxRadius, "fov": [imsize[0], imsize[1]]});
 
 				if not np.any(np.isnan(pc)):
 					radial.append(pc);
@@ -490,98 +629,98 @@ if __name__ == '__main__':
 
 	
 	a = b;
-
-	#############
-	## Linking ##
-	#############
 	'''
-	from scipy.spatial import cKDTree;
-	from scipy.spatial.distance import cdist;
 
-	from scipy.sparse import csr_matrix;
-	from scipy.sparse.csgraph import connected_components;
+	#############
+	## Trackpy ##
+	#############
+	import trackpy;
 
-	import datetime;
-
-	def particleFilter(area):
-		print(np.sqrt(area / np.pi));
-		return np.sqrt(area / np.pi) > 5 and np.sqrt(area / np.pi) < 20;
-
-	def setTimestamp(inputs):
-		start = datetime.datetime(9999, 1, 1);
-
-		for input in inputs:
-			cd = datetime.datetime(input["year"], input["month"], input["day"], input["hour"], input["minute"]);
-
-			if cd < start:
-				start = cd;
-
-		for i, input in enumerate(inputs):
-			cd = datetime.datetime(input["year"], input["month"], input["day"], input["hour"], input["minute"]);
-
-			td = (cd - start).seconds;
-
-			inputs[i]["timestamp"] = td;
-
-	def loadPositions(input):
-		P = [];
-
-		print("asd");
-		with open(input['path'] + "/" + input['file']) as fp:
-			js = json.load(fp);
-
-			for p in js:
-				if particleFilter(p["area"]):
-					P.append([p["X"], p["Y"]]);
-
-			return np.array(P);
-
-		return None;
-
-	def computeEdgeDistance(P, size):
-		X = np.minimum(P[0], size[0] - P[0]);
-		Y = np.minimum(P[1], size[1] - P[1]);
-
-		return np.minimum(X, Y);
-
-	def link(A, B, maxSize, maxDistance=10):
-		D = cdist(A, B);
-
-		OF = computeEdgeDistance(A, maxSize);
-		IF = computeEdgeDistance(B, maxSize);
-
-		D [D  > maxDistance] = np.nan;
-		OF[OF > maxDistance] = maxDistance;
-		IF[IF > maxDistance] = maxDistance;
-
-		M = np.isnan(D) == False;
-
-		print(M);
+	print("Trackpy tracking");
 
 	parentInputs = utils.getInputFiles(folderPattern, particlePath);
 
-	for parentInput in parentInputs:
-		if parentInput["col"] != 1 and parentInput["col"] != 7:
-			continue;
-
+	def track(parentInput):
 		inputs = utils.getInputFiles(filePattern, parentInput["path"] + parentInput["file"]);
 
-		setTimestamp(inputs);
+		save_file = track_path + folderPattern.format(**parentInput) + ".csv";
 
-		inputs = sorted(inputs, key=lambda x: x["timestamp"]);
+		df = [];
+
+		time2date = {};
+
+		parentInput["vid"]        = parentInput["plate"];
+		parentInput["fileEnding"] = "tif";
+
+		for input in inputs:
+			with open(input["path"] + "/" + input["file"]) as fp:
+				particles = json.load(fp);
+
+				time = input["day"] * 24 + input["hour"];
+
+				df_ = pd.DataFrame(particles);
+				df_["Time"] = time;
+
+				time2date[time] = {"day": input["day"], "hour": input["hour"], "minute": input["minute"]};
+
+				df.append(df_);
+
+		df = pd.concat(df);
+		df = df.rename(columns={"X": "x", "Y": "y", "Time": "frame"});
 
 		print(parentInput["file"]);
-		for n in range(1, len(inputs)):
-			print(inputs[n - 1]["timestamp"], inputs[n]["timestamp"]);
+		
+		tracks = trackpy.link_df(df, 300, memory=1, adaptive_step=0.95, adaptive_stop=1);
 
-			A = loadPositions(inputs[n - 1]);
-			B = loadPositions(inputs[n    ]);
+		tracks.to_csv(save_file, index=False, sep="\t");
 
-			print(A);
-			print(B);
+		##
+		## Plot debug tracks
+		if False:
+			savePath = track_debug_path + folderPattern.format(**parentInput) + "/";
+			utils.defineOutput(savePath);
 
-			link(A, B, [1408, 1040], 10);
-			
-			Aasd = bdsa;
-	'''
+			tt = sorted(list(tracks["frame"].unique()));
 
+			for t in tt:
+				frame = tracks[tracks["frame"] == t];
+				ids = frame["particle"];
+
+				full = tracks[tracks["particle"].isin(ids)];
+
+				plt.figure(figsize=(8, 8));
+
+				import imageio;
+
+				raw_impath = rawPath    + rawFolderPattern.format(**parentInput) + "/" + rawPattern.format(**{**parentInput, **time2date[t]});
+				fil_impath = filterPath + folderPattern.format(**parentInput) + "/" + filePattern.format(**{**parentInput, **time2date[t], "fileEnding": "png"});
+
+				I = imageio.imread(fil_impath);
+
+				plt.imshow(I, cmap='Greys');
+
+				for id in ids:
+					track = full[(full["particle"] == id) & (full["frame"] <= t) & (full["frame"] >= t - 10)];
+
+					track["x"] = track["x"] / micronsPerPixel;
+					track["y"] = track["y"] / micronsPerPixel;
+
+					if len(track) == 1:
+						plt.scatter(track["x"], track["y"], s=4);
+					else:
+						plt.plot(track["x"], track["y"]);
+
+				plt.xlim([0, full_image_size[0]]);
+				plt.ylim([0, full_image_size[1]]);
+
+				plt.savefig(savePath + filePattern.format(**{**parentInput, **time2date[t], "fileEnding": "png"}) + "");
+
+				plt.close("all");
+
+				if t > 40:
+					break;
+
+	pool = Pool(nodes=10);
+	pool.map(track, parentInputs);
+
+	
