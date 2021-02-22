@@ -539,7 +539,7 @@ if __name__ == '__main__':
 	########################
 	## Summary statistics ##
 	########################
-	'''
+	
 	print("Extract summary statistics");
 
 	parentInputs = utils.getInputFiles(folderPattern, particlePath);
@@ -552,7 +552,7 @@ if __name__ == '__main__':
 	radii = None;
 
 	for parentInput in parentInputs:
-		inputs = utils.getInputFiles(filePattern, parentInput["path"] + parentInput["file"], filter=lambda row: row["day"] == 4 and row["hour"] in [0]);
+		inputs = utils.getInputFiles(filePattern, parentInput["path"] + parentInput["file"], filter=lambda row: row["day"] == 4 and (row["hour"] in [0] or (row["hour"] == 1 and parentInput["plate"] == 301)));
 
 		imsize = [full_image_size[0] * micronsPerPixel, full_image_size[1] * micronsPerPixel];
 		#side   = full_image_size[0] * micronsPerPixel / 4;
@@ -560,6 +560,8 @@ if __name__ == '__main__':
 		# x, y, w, h
 		#rect = [imsize[0] / 2 - side, imsize[1] / 2 - side, imsize[0] / 2 + side, imsize[1] / 2 + side];
 		rect = [0, 0, imsize[0], imsize[1]];
+
+		print();
 
 		sizes        = [];
 		numParticles = [];
@@ -626,14 +628,12 @@ if __name__ == '__main__':
 		if len(data) > 0:
 			with open(summaryPath + folderPattern.format(**parentInput) + ".json", 'w') as fp:
 				json.dump(data, fp);
-
 	
-	a = b;
-	'''
 
 	#############
 	## Trackpy ##
 	#############
+	'''
 	import trackpy;
 
 	print("Trackpy tracking");
@@ -723,4 +723,4 @@ if __name__ == '__main__':
 	pool = Pool(nodes=10);
 	pool.map(track, parentInputs);
 
-	
+	'''
