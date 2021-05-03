@@ -59,6 +59,7 @@ basePath = "/media/emiro593/AdherentCells/";
 rawPath = basePath + "Ludmila_2020_06_02/";
 
 folderPattern  = "{plate:d}_{row}{col:02d}";
+trackPattern   = "{plate:d}_{row}{col:02d}.csv";
 filePattern    = "{day:02d}d{hour:02d}h{minute:02d}m.{fileEnding}";
 
 rawFolderPattern   = "{plate:d}";
@@ -74,6 +75,7 @@ filterPath     = basePath + "Filtered/";
 stabilizedPath = basePath + "Export_Stabilized/";
 particlePath   = basePath + "Particle/"
 summaryPath    = basePath + "Summary/"
+summaryPathMSD = basePath + "SummaryMSD/"
 baxterPath     = basePath + "Baxter/"
 weightPath     = basePath + "WeightMap/";
 
@@ -121,6 +123,7 @@ utils.defineOutput(baxterPath);
 utils.defineOutput(weightPath);
 utils.defineOutput(stabilizedPath);
 utils.defineOutput(summaryPath);
+utils.defineOutput(summaryPathMSD);
 utils.defineOutput(track_path);
 utils.defineOutput(track_debug_path);
 
@@ -539,7 +542,7 @@ if __name__ == '__main__':
 	########################
 	## Summary statistics ##
 	########################
-	
+	'''
 	print("Extract summary statistics");
 
 	parentInputs = utils.getInputFiles(folderPattern, particlePath);
@@ -628,7 +631,7 @@ if __name__ == '__main__':
 		if len(data) > 0:
 			with open(summaryPath + folderPattern.format(**parentInput) + ".json", 'w') as fp:
 				json.dump(data, fp);
-	
+	'''
 
 	#############
 	## Trackpy ##
@@ -724,3 +727,71 @@ if __name__ == '__main__':
 	pool.map(track, parentInputs);
 
 	'''
+
+	##########################
+	## Summary statistics 2 ##
+	##########################
+
+	inputs = utils.getInputFiles(trackPattern, track_path);
+
+	track_df = [];
+
+	## Load all data
+	df = [];
+	for input in inputs:
+		df_ = pd.read_csv(input["path"] + input["file"], sep="\t");
+
+		df_["Row"]    = input["row"];
+		df_["Column"] = input["col"];
+		df_["Plate"]  = input["plate"];
+
+		# Only the first 4 days
+		if True:
+			df_ = df_[df_["frame"] <= 96];
+
+		# Subtract drift
+		if False:
+			df_ = trackpy.motion.subtract_drift(df_);
+
+		# Remove short tracks
+		if False:
+			df_ = trackpy.filtering.filter_stubs(df_, 3);
+
+		track_df.append(df_);
+
+	track_df = pd.concat(track_df);
+
+	## Compute summary statistics
+	import trackpy;
+	from scipy.optimize import curve_fit;
+
+	for keys, gdf in track_df.groupby(["Plate", "Row", "Column"]):
+		print(keys);
+		msd = trackpy.motion.emsd(gdf, 1, 1/3600, max_lagtime=24);
+
+		msd = pd.DataFrame(msd).reset_index();
+
+		T = np.max(gdf["frame"]);
+		N = np.sum(gdf["frame"] == T);
+
+		popt, pcov = curve_fit(lambda x, a: a * x, msd["lagt"].values, msd["msd"].values);
+
+		baseRadius = 20;
+		maxRadius  = 260;
+		imsize = [full_image_size[0] * micronsPerPixel, full_image_size[1] * micronsPerPixel];
+		rect   = [0, 0, imsize[0], imsize[1]];
+
+		n_r = np.arange(0, maxRadius, baseRadius)[:-1];
+		data = [];
+
+		data.append({"plate": int(keys[0]), "col": int(keys[2]), "row": keys[1], "num": int(N), "radius": 0, "MSD": float(popt[0]), "pairCorrelation": list([0 for i in n_r]), "radii": list([0 for i in n_r]), "dr": baseRadius, "rMax": maxRadius, "fov": [imsize[0], imsize[1]]});
+
+		if len(data) > 0:
+			with open(summaryPathMSD + folderPattern.format(plate=keys[0], row=keys[1], col=keys[2]) + ".json", 'w') as fp:
+				json.dump(data, fp);
+
+	#msd_df = pd.concat(msd_df);
+	#msd_df.to_csv(basePath + "msd_tracked_data.csv", index=False, sep="\t");
+
+	#print(len(pd.unique(msd_df["Celline"])));
+
